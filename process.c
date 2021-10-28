@@ -54,7 +54,13 @@ int process_simple(const CMD *cmd) {
   pid_t pid = fork();
 
   if (pid == 0) {
-    // handle redirects (set stdout, stdin, toType, fromType?)
+    // handle var definition
+    for (int i = 0; i < cmd->nLocal; i++) {
+      fprintf(stderr, "processing %s\n", cmd->locVar[i]);
+      setenv(cmd->locVar[i], cmd->locVal[i], 1);
+    }
+
+    // handle redirects
     if (cmd->toFile != NULL) {
       int new_output_fd = open(cmd->toFile, O_RDWR);
       dup2(new_output_fd, STDOUT_FILENO);
@@ -65,11 +71,6 @@ int process_simple(const CMD *cmd) {
       int new_input_fd = open(cmd->fromFile, O_RDONLY);
       dup2(new_input_fd, STDIN_FILENO);
       close(new_input_fd);
-    }
-    
-    // handle var definition (from list of local variables, setenv?)
-    for (int i = 0; i < cmd->nLocal; i++) {
-      setenv(cmd->locVar[i], cmd->locVal[i], 1);
     }
 
     // handle specific cases for pushd, popd, cd
@@ -88,16 +89,15 @@ int process_simple(const CMD *cmd) {
     execvp(command, cmd->argv);
   }
 
-  waitpid(pid, &status, WNOHANG);
+  waitpid(pid, &status, WNOHANG | WUNTRACED | WCONTINUED);
 
   return status;
 }
 
 int process(const CMD *cmd) {
-  if (cmd == NULL) {
-    return 0;
-  }
   int status = 0;
+  if (cmd == NULL) return status;
+  
   switch (cmd->type) {
     case SIMPLE:
     default:
