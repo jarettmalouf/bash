@@ -9,6 +9,7 @@
 #include <sys/file.h>
 #include <sys/wait.h>
 #include <limits.h>
+#include <math.h>
 #include <linux/limits.h>
 #include "/c/cs323/proj4/starter-code/parse.h"
 #include "process.h"
@@ -56,19 +57,51 @@ void handle_redirect_output(const CMD *cmd) {
   close(new_output_fd);
 }
 
-void handle_dir_change(const CMD *cmd) {
-  char *command = cmd->argv[0];
-  if (strcmp(command, "pushd") == 0) {
-    char *path = cmd->argv[cmd->argc - 1];
-    chdir(path);
-    dir_push(path);
-  } else if (strcmp(command, "popd") == 0) {
-    dir_pop();
-    chdir(dir_peek());
-  } else if (strcmp(command, "cd") == 0) {
-    char *path = cmd->argv[cmd->argc - 1];
-    chdir(path);
+void print_stack() {
+  for (int i = top; i >= 0; i--) {
+    fprintf(stdout, "%s", dir_stack[i]);
+    if (i > 0) fprintf(stdout, " ");
   }
+  fprintf(stdout,"\n");
+}
+
+int handle_dir_change(const CMD *cmd) {
+  int status = 0;
+
+  // pushd
+  if (strcmp(cmd->argv[0], "pushd") == 0) {
+    if (cmd->argc != 2) return STATUS(1);
+    if (top == -1) dir_push("/");
+    char *cwd = (char*) malloc(sizeof(char) * 100);
+    status = chdir(cmd->argv[1]);
+    getcwd(cwd, 100);
+    dir_push(cwd);
+    print_stack();
+  } 
+
+  // popd
+  else if (strcmp(cmd->argv[0], "popd") == 0) {
+    if (top == -1) return STATUS(1);
+    char *popped_dir = dir_pop();
+    fprintf(stdout, "%s\n", popped_dir);
+    status = chdir(dir_peek());
+  } 
+  
+  // cd
+  else if (strcmp(cmd->argv[0], "cd") == 0) {
+    if (cmd->argc == 1) {
+      char *home = getenv("HOME");
+      if (home == NULL) {
+        return STATUS(1);
+      }
+      status = chdir(home);
+    } else if (cmd->argc == 2) {
+      char *path = cmd->argv[1];
+      status = chdir(path);
+    }
+  }
+
+  return STATUS(status);
 }
 
 void handle_var_definitions(const CMD *cmd) {
@@ -95,6 +128,10 @@ void handle_redirects(const CMD *cmd) {
   }
 }
 
+bool is_builtin(const CMD *cmd) {
+  return strcmp(cmd->argv[0], "cd") == 0 || strcmp(cmd->argv[0], "pushd") == 0 || strcmp(cmd->argv[0], "popd") == 0;
+}
+
 int process_simple(const CMD *cmd) {
   int status;
   pid_t pid = fork();
@@ -102,11 +139,14 @@ int process_simple(const CMD *cmd) {
   if (pid == 0) {
     handle_var_definitions(cmd);
     handle_redirects(cmd);
-    handle_dir_change(cmd);
     int exec_status = execvp(cmd->argv[0], cmd->argv);
-    if (exec_status == -1) exit(0);
-  }
+    if (exec_status == -1) { 
+      exit(1); 
+      // perror(""); 
+    }
+  } 
 
+  if (is_builtin(cmd)) status = handle_dir_change(cmd);
   waitpid(pid, &status, 0);
   
   return STATUS(status);
@@ -270,9 +310,16 @@ int process_sep_or(const CMD *cmd) {
   return STATUS(status_r);
 }
 
+void set_last_status(int status) {
+  char s_status[100];
+  sprintf(s_status, "%d", status);
+  setenv("?", s_status, 1);
+}
+
 int process(const CMD *cmd) {
   reap_zombies();
   int status = 0;
+
   if (cmd == NULL) return status;
 
   switch (cmd->type) {
@@ -292,6 +339,7 @@ int process(const CMD *cmd) {
       status = process_simple(cmd);
   }
 
+  set_last_status(status);
   return status;
 }
 
