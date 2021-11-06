@@ -14,9 +14,7 @@
 #include "/c/cs323/proj4/starter-code/parse.h"
 #include "process.h"
 
-#define STACK_SIZE 100
-
-char *dir_stack[STACK_SIZE];         
+char *dir_stack[100];         
 int top = -1;  
 bool is_dir_stack_empty() { return top == -1; }
 char *dir_pop() { return dir_stack[top--]; }
@@ -29,10 +27,11 @@ int get_exit_code(int s1, int s2) {
   return 0;
 }
 
-int err_out(char *command) {
-  int err_no = errno;
+int err_out(char *command) { 
+  int err_no = errno; 
   perror(command);
-  return err_no;
+  exit(err_no); 
+  return err_no; 
 }
 
 int handle_redirect_input(const CMD *cmd) {
@@ -83,14 +82,13 @@ int handle_dir_change(const CMD *cmd, bool child) {
 
   // pushd
   if (strcmp(cmd->argv[0], "pushd") == 0) {
-    if (cmd->argc != 2) {
-      if (child) perror("cd"); 
-      return 1;
-    }
+    if (cmd->argc != 2 && child) return err_out("pushd");
     if (top == -1) dir_push("/");
     char *cwd = (char*) malloc(sizeof(char) * 100);
     status = chdir(cmd->argv[1]);
-    getcwd(cwd, 100);
+    if (status == -1 && child) return err_out("chdir");
+    char *cwd_status = getcwd(cwd, 100);
+    if (cwd_status == NULL) return err_out("getcwd");
     dir_push(cwd);
     if (child) print_stack();
   } 
@@ -101,6 +99,7 @@ int handle_dir_change(const CMD *cmd, bool child) {
     char *popped_dir = dir_pop();
     if (child) fprintf(stdout, "%s\n", popped_dir);
     status = chdir(dir_peek());
+    if (status == -1 && child) return err_out("chdir");
   } 
   
   // cd
@@ -108,20 +107,16 @@ int handle_dir_change(const CMD *cmd, bool child) {
     if (cmd->argc == 1) {
       char *home = getenv("HOME");
       if (home == NULL) {
-        if (child) perror("cd");
-        return 1;
+        if (child) return err_out("cd");
       }
       status = chdir(home);
+      if (status == -1 && child) return err_out("chdir");
     } else if (cmd->argc == 2) {
       char *path = cmd->argv[1];
       status = chdir(path);
-      if (status == -1 && child) {
-        int err_no = errno;
-        perror("cd");
-        return err_no;
-      }
+      if (status == -1 && child) return err_out("chdir");
     } else {
-      if (child) perror("cd");
+      if (child) return err_out("cd");
       return 1;
     }
   }
@@ -160,11 +155,10 @@ bool is_builtin(const CMD *cmd) {
   return strcmp(cmd->argv[0], "cd") == 0 || strcmp(cmd->argv[0], "pushd") == 0 || strcmp(cmd->argv[0], "popd") == 0;
 }
 
-
-
 int process_simple(const CMD *cmd) {
   int status;
   pid_t pid = fork();
+  if (pid == -1) return err_out("fork");
 
   if (pid == 0) {
     handle_var_definitions(cmd);
@@ -194,9 +188,11 @@ int process_pipe(const CMD *cmd) {
   if (cmd == NULL) return 0;
   int fd_pair[2];
   int status_l, status_r;
-  pipe(fd_pair);
+  int pipe_status = pipe(fd_pair);
+  if (pipe_status == -1) return err_out("pipe");
   
   pid_t left_pid = fork();
+  if (left_pid == -1) return err_out("fork");
   if (left_pid == 0) {
     dup2(fd_pair[1], STDOUT_FILENO);
     close_fd_pair(fd_pair);
@@ -204,6 +200,7 @@ int process_pipe(const CMD *cmd) {
   }
 
   pid_t right_pid = fork();
+  if (right_pid == -1) return err_out("fork");
   if (right_pid == 0) {
     dup2(fd_pair[0], STDIN_FILENO);
     close_fd_pair(fd_pair);
@@ -233,6 +230,7 @@ int process_sep_end(const CMD *cmd) {
   int status_l, status_r;
 
   pid_t left_pid = fork();
+  if (left_pid == -1) return err_out("fork");
   if (left_pid == 0) {
     status_l = process(cmd->left);
     exit(status_l);
@@ -240,6 +238,7 @@ int process_sep_end(const CMD *cmd) {
   waitpid(left_pid, &status_l, 0);
 
   pid_t right_pid = fork();
+  if (right_pid == -1) return err_out("fork");
   if (right_pid == 0) {
     status_r = process(cmd->right);
     exit(status_r);
@@ -252,6 +251,7 @@ int process_sep_end(const CMD *cmd) {
 int process_subcmd(const CMD *cmd) {
   int status;
   pid_t pid = fork();
+  if (pid == -1) return err_out("fork");
 
   if (pid == 0) {
     handle_var_definitions(cmd);
@@ -268,11 +268,13 @@ int process_sep_bg(const CMD *cmd) {
   int status_r = 0;
 
   pid_t left_pid = fork();
+  if (left_pid == -1) return err_out("fork");
   if (left_pid == 0) {
     exit(process(cmd->left));
   }
 
   pid_t right_pid = fork();
+  if (right_pid == -1) return err_out("fork");
   if (right_pid == 0) {
     status_r = process(cmd->right);
     fprintf(stderr, "Backgrounded: %d\n", getpid());
@@ -297,6 +299,7 @@ int process_sep_and(const CMD *cmd) {
   int status_l, status_r;
   
   pid_t left_pid = fork();
+  if (left_pid == -1) return err_out("fork");
   if (left_pid == 0) {
     status_l = process(cmd->left);
     exit(status_l);
@@ -308,6 +311,7 @@ int process_sep_and(const CMD *cmd) {
   }
 
   pid_t right_pid = fork();
+  if (right_pid == -1) return err_out("fork");
   if (right_pid == 0) {
     status_r = process(cmd->right);
         exit(status_r);
@@ -322,6 +326,7 @@ int process_sep_or(const CMD *cmd) {
   int status_l, status_r;
   
   pid_t left_pid = fork();
+  if (left_pid == -1) return err_out("fork");
   if (left_pid == 0) {
     status_l = process(cmd->left);
     exit(status_l);
@@ -333,6 +338,7 @@ int process_sep_or(const CMD *cmd) {
   }
 
   pid_t right_pid = fork();
+  if (right_pid == -1) return err_out("fork");
   if (right_pid == 0) {
     status_r = process(cmd->right);
     exit(status_r);
@@ -374,30 +380,3 @@ int process(const CMD *cmd) {
   set_last_status(status);
   return status;
 }
-
-// typedef struct cmd {
-//   int type;             // Node type: SIMPLE, PIPE, SEP_AND, SEP_OR, SEP_END,
-// 			//   SEP_BG, SUBCMD, or NONE (default)
-
-//   int argc;             // Number of command-line arguments
-//   char **argv;          // Null-terminated argument vector or NULL
-
-//   int nLocal;           // Number of local variable assignments
-//   char **locVar;        // Array of local variable names and the values to
-//   char **locVal;        //   assign to them when the command executes
-
-//   int fromType;         // Redirect stdin: NONE (default), RED_IN (<), or
-// 			//   RED_IN_HERE (<<)
-//   char *fromFile;       // File to redirect stdin, contents of here document,
-// 			//   or NULL (default)
-
-//   int toType;           // Redirect stdout: NONE (default), RED_OUT (>),
-// 			//   RED_OUT_APP (>>)
-//   char *toFile;         // File to redirect stdout or NULL (default)
-
-//   int errType;          // Unused for this project.
-//   char *errFile;        // Unused for this project.
-
-//   struct cmd *left;     // Left subtree or NULL (default)
-//   struct cmd *right;    // Right subtree or NULL (default)
-// } CMD;
