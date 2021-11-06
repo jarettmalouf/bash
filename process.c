@@ -29,37 +29,45 @@ int get_exit_code(int s1, int s2) {
   return 0;
 }
 
-void handle_redirect_input(const CMD *cmd) {
-  int new_input_fd = open(cmd->fromFile, O_RDONLY);
-  dup2(new_input_fd, STDIN_FILENO);
-  close(new_input_fd);
+int err_out(char *command) {
+  int err_no = errno;
+  perror(command);
+  return err_no;
 }
 
-void handle_redirect_here_input(const CMD *cmd) {
+int handle_redirect_input(const CMD *cmd) {
+  int new_input_fd = open(cmd->fromFile, O_RDONLY);
+  if (new_input_fd == -1) return err_out(cmd->argv[0]);
+  dup2(new_input_fd, STDIN_FILENO);
+  close(new_input_fd);
+  return 0;
+}
+
+int handle_redirect_here_input(const CMD *cmd) {
   char template[] = "/tmp/Bash_heredoc_XXXXXX";
   int tmp_fd = mkstemp(template);
   write(tmp_fd, cmd->fromFile, strlen(cmd->fromFile));
   lseek(tmp_fd, 0, SEEK_SET);
   dup2(tmp_fd, STDIN_FILENO);
   close(tmp_fd);
+  return 0;
 }
 
-void handle_redirect_output_append(const CMD *cmd) {
+int handle_redirect_output_append(const CMD *cmd) {
   int new_output_fd = open(cmd->toFile, O_CREAT | O_RDWR | O_APPEND, S_IRUSR | S_IWUSR);
+  if (new_output_fd == -1) return err_out("open");
   lseek(new_output_fd, 0, SEEK_END);
   dup2(new_output_fd, STDOUT_FILENO);
   close(new_output_fd);
+  return 0;
 }
 
-void handle_redirect_output(const CMD *cmd) {
+int handle_redirect_output(const CMD *cmd) {
   int new_output_fd = open(cmd->toFile, O_CREAT | O_RDWR | O_TRUNC, S_IRUSR | S_IWUSR);
-  if (new_output_fd == -1) {
-    int err_no = errno;
-    perror("open");
-    
-  }
+  if (new_output_fd == -1) return err_out("open");
   dup2(new_output_fd, STDOUT_FILENO);
   close(new_output_fd);
+  return 0;
 }
 
 void print_stack() {
@@ -127,27 +135,32 @@ void handle_var_definitions(const CMD *cmd) {
   }
 }
 
-void handle_redirects(const CMD *cmd) {
+int handle_redirects(const CMD *cmd) {
+  int status = 0;
   switch (cmd->toType) {
     case RED_OUT_APP:
-      handle_redirect_output_append(cmd); break;
+      status = handle_redirect_output_append(cmd); break;
     case RED_OUT:
-      handle_redirect_output(cmd); break;
+      status = handle_redirect_output(cmd); break;
     default: break;
   }
 
   switch (cmd->fromType) {
     case RED_IN_HERE:
-      handle_redirect_here_input(cmd); break;
+      status = handle_redirect_here_input(cmd); break;
     case RED_IN:
-      handle_redirect_input(cmd); break;
+      status = handle_redirect_input(cmd); break;
     default: break;
   }
+
+  return status;
 }
 
 bool is_builtin(const CMD *cmd) {
   return strcmp(cmd->argv[0], "cd") == 0 || strcmp(cmd->argv[0], "pushd") == 0 || strcmp(cmd->argv[0], "popd") == 0;
 }
+
+
 
 int process_simple(const CMD *cmd) {
   int status;
@@ -155,16 +168,11 @@ int process_simple(const CMD *cmd) {
 
   if (pid == 0) {
     handle_var_definitions(cmd);
-    handle_redirects(cmd);
+    int redir_status = handle_redirects(cmd);
+    if (redir_status != 0) return redir_status;
     if (!is_builtin(cmd)) {
       int exec_status = execvp(cmd->argv[0], cmd->argv);
-      if (exec_status == -1) { 
-        // save errno
-        int err_no = errno;
-        perror("execvp");
-        exit(err_no); 
-        // perror(""); 
-      }
+      if (exec_status == -1) return err_out("execvp");
     } else {
       status = handle_dir_change(cmd, true);
       exit(status);
@@ -248,7 +256,6 @@ int process_subcmd(const CMD *cmd) {
   if (pid == 0) {
     handle_var_definitions(cmd);
     handle_redirects(cmd);
-    // handle_dir_change(cmd);
     exit(process(cmd->left));
   }
 
