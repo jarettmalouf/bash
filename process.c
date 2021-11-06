@@ -53,6 +53,11 @@ void handle_redirect_output_append(const CMD *cmd) {
 
 void handle_redirect_output(const CMD *cmd) {
   int new_output_fd = open(cmd->toFile, O_CREAT | O_RDWR | O_TRUNC, S_IRUSR | S_IWUSR);
+  if (new_output_fd == -1) {
+    int err_no = errno;
+    perror("open");
+    
+  }
   dup2(new_output_fd, STDOUT_FILENO);
   close(new_output_fd);
 }
@@ -65,25 +70,28 @@ void print_stack() {
   fprintf(stdout,"\n");
 }
 
-int handle_dir_change(const CMD *cmd) {
+int handle_dir_change(const CMD *cmd, bool child) {
   int status = 0;
 
   // pushd
   if (strcmp(cmd->argv[0], "pushd") == 0) {
-    if (cmd->argc != 2) return STATUS(1);
+    if (cmd->argc != 2) {
+      if (child) perror("cd"); 
+      return 1;
+    }
     if (top == -1) dir_push("/");
     char *cwd = (char*) malloc(sizeof(char) * 100);
     status = chdir(cmd->argv[1]);
     getcwd(cwd, 100);
     dir_push(cwd);
-    print_stack();
+    if (child) print_stack();
   } 
 
   // popd
   else if (strcmp(cmd->argv[0], "popd") == 0) {
-    if (top == -1) return STATUS(1);
+    if (top == -1) return 1;
     char *popped_dir = dir_pop();
-    fprintf(stdout, "%s\n", popped_dir);
+    if (child) fprintf(stdout, "%s\n", popped_dir);
     status = chdir(dir_peek());
   } 
   
@@ -92,12 +100,21 @@ int handle_dir_change(const CMD *cmd) {
     if (cmd->argc == 1) {
       char *home = getenv("HOME");
       if (home == NULL) {
-        return STATUS(1);
+        if (child) perror("cd");
+        return 1;
       }
       status = chdir(home);
     } else if (cmd->argc == 2) {
       char *path = cmd->argv[1];
       status = chdir(path);
+      if (status == -1 && child) {
+        int err_no = errno;
+        perror("cd");
+        return err_no;
+      }
+    } else {
+      if (child) perror("cd");
+      return 1;
     }
   }
 
@@ -139,15 +156,23 @@ int process_simple(const CMD *cmd) {
   if (pid == 0) {
     handle_var_definitions(cmd);
     handle_redirects(cmd);
-    int exec_status = execvp(cmd->argv[0], cmd->argv);
-    if (exec_status == -1) { 
-      exit(1); 
-      // perror(""); 
+    if (!is_builtin(cmd)) {
+      int exec_status = execvp(cmd->argv[0], cmd->argv);
+      if (exec_status == -1) { 
+        // save errno
+        int err_no = errno;
+        perror("execvp");
+        exit(err_no); 
+        // perror(""); 
+      }
+    } else {
+      status = handle_dir_change(cmd, true);
+      exit(status);
     }
   } 
 
-  if (is_builtin(cmd)) status = handle_dir_change(cmd);
   waitpid(pid, &status, 0);
+  if (is_builtin(cmd)) status = handle_dir_change(cmd, false);
   
   return STATUS(status);
 }
