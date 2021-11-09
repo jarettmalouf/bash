@@ -157,7 +157,7 @@ bool is_builtin(const CMD *cmd) {
 
 int process_simple(const CMD *cmd) {
   int status;
-  pid_t pid = fork();
+  pid_t pid = fork(); signal(SIGINT, SIG_DFL);
   if (pid == -1) return err_out("fork");
 
   if (pid == 0) {
@@ -191,7 +191,7 @@ int process_pipe(const CMD *cmd) {
   int pipe_status = pipe(fd_pair);
   if (pipe_status == -1) return err_out("pipe");
   
-  pid_t left_pid = fork();
+  pid_t left_pid = fork(); signal(SIGINT, SIG_DFL);
   if (left_pid == -1) return err_out("fork");
   if (left_pid == 0) {
     dup2(fd_pair[1], STDOUT_FILENO);
@@ -199,7 +199,7 @@ int process_pipe(const CMD *cmd) {
     exit(process(cmd->left));
   }
 
-  pid_t right_pid = fork();
+  pid_t right_pid = fork(); signal(SIGINT, SIG_DFL);
   if (right_pid == -1) return err_out("fork");
   if (right_pid == 0) {
     dup2(fd_pair[0], STDIN_FILENO);
@@ -229,7 +229,7 @@ void print_info(const CMD *cmd) {
 int process_sep_end(const CMD *cmd) {
   int status_l, status_r;
 
-  pid_t left_pid = fork();
+  pid_t left_pid = fork(); signal(SIGINT, SIG_DFL);
   if (left_pid == -1) return err_out("fork");
   if (left_pid == 0) {
     status_l = process(cmd->left);
@@ -237,7 +237,7 @@ int process_sep_end(const CMD *cmd) {
   }
   waitpid(left_pid, &status_l, 0);
 
-  pid_t right_pid = fork();
+  pid_t right_pid = fork(); signal(SIGINT, SIG_DFL);
   if (right_pid == -1) return err_out("fork");
   if (right_pid == 0) {
     status_r = process(cmd->right);
@@ -250,7 +250,7 @@ int process_sep_end(const CMD *cmd) {
 
 int process_subcmd(const CMD *cmd) {
   int status;
-  pid_t pid = fork();
+  pid_t pid = fork(); signal(SIGINT, SIG_DFL);
   if (pid == -1) return err_out("fork");
 
   if (pid == 0) {
@@ -266,14 +266,15 @@ int process_subcmd(const CMD *cmd) {
 
 int process_sep_bg(const CMD *cmd) {
   int status_r = 0;
+  bool leaf = cmd->left == NULL && cmd->right == NULL;
 
-  pid_t left_pid = fork();
+  pid_t left_pid = fork(); signal(SIGINT, SIG_DFL);
   if (left_pid == -1) return err_out("fork");
   if (left_pid == 0) {
     exit(process(cmd->left));
   }
 
-  pid_t right_pid = fork();
+  pid_t right_pid = fork(); signal(SIGINT, SIG_DFL);
   if (right_pid == -1) return err_out("fork");
   if (right_pid == 0) {
     status_r = process(cmd->right);
@@ -282,6 +283,7 @@ int process_sep_bg(const CMD *cmd) {
   }
 
   waitpid(right_pid, &status_r, 0);
+
   return STATUS(status_r);
 }
 
@@ -298,7 +300,7 @@ void reap_zombies() {
 int process_sep_and(const CMD *cmd) {
   int status_l, status_r;
   
-  pid_t left_pid = fork();
+  pid_t left_pid = fork(); signal(SIGINT, SIG_DFL);
   if (left_pid == -1) return err_out("fork");
   if (left_pid == 0) {
     status_l = process(cmd->left);
@@ -310,7 +312,7 @@ int process_sep_and(const CMD *cmd) {
     return STATUS(status_l);
   }
 
-  pid_t right_pid = fork();
+  pid_t right_pid = fork(); signal(SIGINT, SIG_DFL);
   if (right_pid == -1) return err_out("fork");
   if (right_pid == 0) {
     status_r = process(cmd->right);
@@ -325,7 +327,7 @@ int process_sep_and(const CMD *cmd) {
 int process_sep_or(const CMD *cmd) {
   int status_l, status_r;
   
-  pid_t left_pid = fork();
+  pid_t left_pid = fork(); signal(SIGINT, SIG_DFL);
   if (left_pid == -1) return err_out("fork");
   if (left_pid == 0) {
     status_l = process(cmd->left);
@@ -337,7 +339,7 @@ int process_sep_or(const CMD *cmd) {
     return STATUS(status_l);
   }
 
-  pid_t right_pid = fork();
+  pid_t right_pid = fork(); signal(SIGINT, SIG_DFL);
   if (right_pid == -1) return err_out("fork");
   if (right_pid == 0) {
     status_r = process(cmd->right);
@@ -356,6 +358,7 @@ void set_last_status(int status) {
 
 int process(const CMD *cmd) {
   reap_zombies();
+  signal(SIGINT, SIG_IGN);
   int status = 0;
 
   if (cmd == NULL) return status;
@@ -377,6 +380,7 @@ int process(const CMD *cmd) {
       status = process_simple(cmd);
   }
 
+  signal(SIGINT, SIG_DFL);
   set_last_status(status);
   return status;
 }
